@@ -1,0 +1,74 @@
+
+#---collect tweets---------------------------------------------------------
+
+library(twitteR)
+library(rtweet)
+library(tidyverse)
+library(tidygraph)
+library(ggraph)
+library(RTextTools)
+
+api_key <- "xxxxxxxxxxxxxxxxxxxxxx"
+api_secret <- "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+token <- "zzzzzzzzzzz-zzzzzzzzzzzzzzzzzzzzzzz"
+token_secret <- "tttttttttttttttttttttttttt"
+setup_twitter_oauth(api_key, api_secret, token, token_secret)
+
+tweets <- searchTwitter("#CopaLibertadores OR #River OR #Boca", n = 200)
+
+
+#---classify---------------------------------------------------------
+
+# read training/test datasets (suspicioustweets, nonsuspecttweets, testtweets)
+
+tweets = rbind(suspicioustweets, nonsuspecttweets, testtweets)
+tweets_matrix = create_matrix(tweets[,1], removeStopwords = FALSE, 
+                 removeNumbers = TRUE, stemWords = FALSE)
+
+container = create_container(tweets_matrix,
+             as.numeric(as.factor(tweets[,2])), 
+             trainSize = 1:trnsize, testSize = trnsize:tstsize, 
+             virgin = FALSE)
+#train the SVM model
+tweet_model <- train_model(container, algorithm = "SVM")
+
+tweet_model_result <- classify_model(container, tweet_model)
+table(as.numeric(as.factor(tweets[trnsize:tstsize, 2])), 
+      tweet_model_result[,"SVM_LABEL"])
+
+analytics = create_analytics(container, tweet_model_result)
+summary(analytics)
+
+# classify the test tweets
+tweet_model_result
+
+
+#---plot relations network---------------------------------------------------------
+
+# collect the followers
+theFollowers <- get_followers("mhackerass")
+ids <- sample(theFollowers$user_id, 100)
+
+# collect the friends
+theFriends <- list()
+for (a in 1:length(ids)){
+  theFriends[[a]] <- get_friends(ids[a])
+  if (a %% 15 == 0){
+    Sys.sleep(15*60) # due to the API rate-limit
+  }
+}
+
+theFriends <- bind_rows(theFriends) %>% rename(friend = user_id)
+filter(theFriends, friend %in% user)
+
+# prepare data
+net <- theFriends %>% group_by(friend) %>% mutate(count = n()) %>% 
+  ungroup() %>% filter(count > 10)
+g2 <- net %>%  select(user, friend) %>% as_tbl_graph(directed = F) %>% 
+  activate(nodes) %>% mutate(centrality = centrality_authority())
+
+# plot data
+ggraph(g2) + geom_edge_link() +
+  geom_node_point(aes(size = centrality, colour = centrality)) +
+  theme_graph()
+
